@@ -14,6 +14,9 @@ public class ThemeFilesTest {
     @Test public void themeFilesAreAllowed() {
         assertEquals("config.json", ThemeFiles.path(Collections.singletonList("config.json")));
         assertEquals("wallpaper.jpg", ThemeFiles.path(Collections.singletonList("wallpaper.jpg")));
+        assertEquals("wallpaper.mp4", ThemeFiles.path(Collections.singletonList("wallpaper.mp4")));
+        assertEquals("wallpaper.gif", ThemeFiles.path(Collections.singletonList("wallpaper.gif")));
+        assertNull(ThemeFiles.path(Collections.singletonList("wallpaper.exe")));
         assertEquals("theme_revision", ThemeFiles.path(Collections.singletonList("theme_revision")));
     }
 

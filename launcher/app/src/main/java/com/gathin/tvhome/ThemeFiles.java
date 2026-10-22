@@ -18,13 +18,21 @@ final class ThemeFiles {
         if (segments.size() == 1) {
             String name = segments.get(0);
             return Config.FILE_NAME.equals(name) || "wallpaper.jpg".equals(name) || "theme_revision".equals(name)
-                    ? name : null;
+                    || isMotion(name) ? name : null;
         }
         if (segments.size() == 2 && WALLPAPERS.equals(segments.get(0))
                 && (collectionImage(segments.get(1)) || WallpaperCaptions.FILE_NAME.equals(segments.get(1)))) {
             return WALLPAPERS + "/" + segments.get(1);
         }
         return null;
+    }
+
+    /** The moving wallpaper a theme may carry next to config.json: one GIF or one muted, looping video. */
+    static final String[] MOTION_NAMES = {"wallpaper.mp4", "wallpaper.webm", "wallpaper.gif"};
+
+    static boolean isMotion(String name) {
+        for (String motion : MOTION_NAMES) if (motion.equals(name)) return true;
+        return false;
     }
 
     /** True for "wallpapers" alone: a delete of it clears the collection's images. */

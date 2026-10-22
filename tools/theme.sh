@@ -61,7 +61,7 @@ put() { echo "rm -f $DIR/$1 2>/dev/null; { o=\$(content write --uri $URI/$1 < $(
 del() { echo "rm -f $DIR/$1 2>/dev/null; content delete --uri $URI/$1 2>/dev/null"; }
 
 if [ "${1:-}" = --reset ]; then
-  tv "mkdir -p $DIR 2>/dev/null; $(del config.json); $(del wallpaper.jpg); printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision); $RESTART; echo reset" | tail -n 1
+  tv "mkdir -p $DIR 2>/dev/null; $(del config.json); $(del wallpaper.jpg); $(del wallpaper.mp4); $(del wallpaper.webm); $(del wallpaper.gif); printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision); $RESTART; echo reset" | tail -n 1
   exit 0
 fi
 THEME="${THEME_ARG:?usage: theme.sh <theme folder> | --reset}"
@@ -78,6 +78,16 @@ if [ -f "$THEME/wallpaper.jpg" ]; then
 else
   tv "$(del wallpaper.jpg)" >/dev/null
 fi
+# A moving wallpaper (wallpaper.mp4, .webm or .gif, up to 40 MB; keep it under ~10 MB for a quick push). Only the
+# one the theme carries stays on the TV.
+for MOTION in wallpaper.mp4 wallpaper.webm wallpaper.gif; do
+  if [ -f "$THEME/$MOTION" ]; then
+    "$PY" -I b64push.py "$THEME/$MOTION" "$(stage "$MOTION")"
+    tv "$(put "$MOTION")" >/dev/null
+  else
+    tv "$(del "$MOTION")" >/dev/null
+  fi
+done
 tv "mkdir -p $DIR/wallpapers 2>/dev/null; rm -f $DIR/wallpapers/*.jpg $DIR/wallpapers/*.jpeg $DIR/wallpapers/*.png $DIR/wallpapers/*.webp $DIR/wallpapers/*.JPG $DIR/wallpapers/*.JPEG $DIR/wallpapers/*.PNG $DIR/wallpapers/*.WEBP 2>/dev/null; content delete --uri $URI/wallpapers 2>/dev/null" >/dev/null
 if [ -d "$THEME/wallpapers" ]; then
   for IMAGE in "$THEME"/wallpapers/*; do

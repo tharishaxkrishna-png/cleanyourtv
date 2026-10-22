@@ -5,6 +5,13 @@ import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.drawable.AnimatedImageDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.ImageDecoder;
+import android.media.MediaPlayer;
+import android.os.Build;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.text.TextUtils;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -50,6 +57,11 @@ final class WallpaperPlayer {
     /** wallpaper_captions: the shown picture's name from wallpapers/captions.txt; null when off or there are none. */
     private final TextView caption;
     private final Map<String, String> names;
+    /** A theme's wallpaper.mp4/.webm/.gif: when present it replaces the still pictures. */
+    private File motion;
+    private MediaPlayer video;
+    private boolean videoReady;
+    private AnimatedImageDrawable gif;
 
     WallpaperPlayer(Context context, FrameLayout root, Config config) {
         this.root = root;
@@ -76,6 +88,12 @@ final class WallpaperPlayer {
         names = config.wallpaperCaptions && config.wallpaperEnabled && !files.isEmpty()
                 ? WallpaperCaptions.read(files.get(0).getParentFile()) : Collections.emptyMap();
         caption = names.isEmpty() ? null : makeCaption(context, root);
+        if (config.wallpaperEnabled) motion = findMotion(Config.dir(context));
+        if (motion != null && startMotion(context)) {
+            root.setBackground(null);
+            return;
+        }
+        motion = null;
         if (config.wallpaperEnabled && !files.isEmpty()) {
             root.addView(image, 0, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -113,17 +131,124 @@ final class WallpaperPlayer {
 
     void start() {
         active = true;
+        if (motion != null) {
+            if (gif != null) gif.start();
+            if (video != null && videoReady && !video.isPlaying()) video.start();
+            return;
+        }
         update();
     }
 
     void stop() {
         active = false;
+        if (gif != null) gif.stop();
+        if (video != null && videoReady && video.isPlaying()) video.pause();
     }
 
     void close() {
         active = false;
         closed = true;
         decoder.shutdownNow();
+        releaseVideo();
+    }
+
+    /** The first moving wallpaper in the theme folder that is a sane size, or null. */
+    private static File findMotion(File dir) {
+        if (dir == null) return null;
+        for (String name : ThemeFiles.MOTION_NAMES) {
+            File file = new File(dir, name);
+            if (file.isFile() && file.length() > 0 && file.length() <= 40L * 1024 * 1024) return file;
+        }
+        return null;
+    }
+
+    /** Puts the GIF or video behind everything; false means "show the still picture instead". */
+    private boolean startMotion(Context context) {
+        try {
+            if (motion.getName().endsWith(".gif")) return startGif();
+            startVideo(context);
+            return true;
+        } catch (Exception | OutOfMemoryError failure) {
+            Log.w("TvHome.Wallpaper", "Moving wallpaper failed: " + failure);
+            releaseVideo();
+            return false;
+        }
+    }
+
+    private boolean startGif() throws Exception {
+        if (Build.VERSION.SDK_INT < 28) return false;   // no animated decoder before Android 9
+        Drawable drawable = ImageDecoder.decodeDrawable(ImageDecoder.createSource(motion), (decoder, info, source) -> {
+            int sample = WallpaperSize.sampleSize(info.getSize().getWidth(), info.getSize().getHeight(), width, height);
+            decoder.setTargetSampleSize(Math.max(1, sample));
+        });
+        if (!(drawable instanceof AnimatedImageDrawable)) {
+            image.setImageDrawable(drawable);   // a one-frame GIF is just a picture
+        } else {
+            gif = (AnimatedImageDrawable) drawable;
+            gif.setRepeatCount(AnimatedImageDrawable.REPEAT_INFINITE);
+            image.setImageDrawable(gif);
+        }
+        root.addView(image, 0, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addDim(context, 1);
+        if (gif != null) gif.start();
+        return true;
+    }
+
+    private void startVideo(Context context) {
+        SurfaceView surface = new SurfaceView(context);
+        surface.setFocusable(false);
+        root.addView(surface, 0, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        addDim(context, 1);
+        surface.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(SurfaceHolder holder) {
+                if (closed) return;
+                try {
+                    releaseVideo();
+                    MediaPlayer player = new MediaPlayer();
+                    video = player;
+                    player.setDataSource(motion.getPath());
+                    player.setDisplay(holder);
+                    player.setLooping(true);
+                    player.setVolume(0f, 0f);   // a wallpaper never makes sound
+                    player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
+                    player.setOnPreparedListener(mp -> {
+                        videoReady = true;
+                        if (active && !closed) mp.start();
+                    });
+                    player.setOnErrorListener((mp, what, extra) -> {
+                        Log.w("TvHome.Wallpaper", "Video error " + what + "/" + extra);
+                        releaseVideo();
+                        return true;
+                    });
+                    player.prepareAsync();
+                } catch (Exception failure) {
+                    Log.w("TvHome.Wallpaper", "Video failed: " + failure);
+                    releaseVideo();
+                }
+            }
+            @Override public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {}
+            @Override public void surfaceDestroyed(SurfaceHolder holder) { releaseVideo(); }
+        });
+    }
+
+    private void releaseVideo() {
+        videoReady = false;
+        if (video != null) {
+            try { video.release(); } catch (Exception ignored) { /* already gone */ }
+            video = null;
+        }
+    }
+
+    /** wallpaper_dim over a moving picture: a plain shade layer, since it cannot be painted into each frame. */
+    private void addDim(Context context, int index) {
+        if (dimColor == 0) return;
+        View shade = new View(context);
+        shade.setBackgroundColor(dimColor);
+        shade.setFocusable(false);
+        root.addView(shade, index, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     }
 
     void update() {
