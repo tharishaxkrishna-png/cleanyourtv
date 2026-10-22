@@ -190,7 +190,7 @@ final class WallpaperPlayer {
         }
         root.addView(image, 0, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        addDim(context, 1);
+        addDim(image.getContext(), 1);
         if (gif != null) gif.start();
         return true;
     }
